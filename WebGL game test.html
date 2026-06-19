@@ -3,19 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mundo Infinito - Primera Persona</title>
+    <title>Mundo Infinito</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
-        #info { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 8px; pointer-events: none; user-select: none; font-size: 14px; z-index: 100; }
-        #instrucciones { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); background: rgba(0,0,0,0.5); padding: 8px 18px; border-radius: 20px; font-size: 14px; pointer-events: none; user-select: none; z-index: 100; letter-spacing: 1px; }
-        #cruz { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.3); font-size: 30px; pointer-events: none; user-select: none; z-index: 100; }
+        body { margin: 0; overflow: hidden; }
     </style>
 </head>
 <body>
-    <div id="info">🎮 Mundo Infinito</div>
-    <div id="instrucciones">WASD · Moverse &nbsp;|&nbsp; RATÓN · Mirar &nbsp;|&nbsp; ESPACIO · Saltar</div>
-    <div id="cruz">+</div>
-
     <script type="importmap">
         {
             "imports": {
@@ -27,147 +20,163 @@
     <script type="module">
         import * as three from 'three';
 
+        // VARIABLES GLOBALES
         let escena, camara, renderizador;
-        let jugador = new three.Vector3(0, 1.6, 0);
-        let velocidad_movimiento = 0.2;
-        let fuerza_salto = 0.2;
-        let gravedad = -0.01;
+        let posicion_jugador = new three.Vector3(0, 1.6, 0);
+        let velocidad_movimiento = 0.15;
+        let fuerza_salto = 0.18;
+        let gravedad = -0.008;
         let velocidad_y = 0;
         let en_suelo = true;
         let angulo_horizontal = 0;
         let angulo_vertical = 0;
-        let esta_bloqueado = false;
+        let puntero_bloqueado = false;
         let teclas = { w: false, a: false, s: false, d: false, espacio: false };
         let chunks_cargados = new Map();
-        let tamanio_chunk = 16;
-        let distancia_vision = 4;
+        let tamanio_chunk = 20;
+        let distancia_vision = 3;
         let ultimo_chunk_x = 0;
         let ultimo_chunk_z = 0;
         let geometrias_compartidas = {};
+        let objetos_colision = [];
 
+        // FUNCIONES
+        // Crea geometrias reutilizables para optimizar memoria
         function crear_geometrias_compartidas() {
-            geometrias_compartidas.plataforma = new three.BoxGeometry(1.8, 0.4, 1.8);
-            geometrias_compartidas.columna = new three.BoxGeometry(0.6, 2.5, 0.6);
-            geometrias_compartidas.tronco = new three.CylinderGeometry(0.3, 0.4, 1.5, 5);
-            geometrias_compartidas.copa = new three.SphereGeometry(0.9, 5, 5);
+            geometrias_compartidas.tronco = new three.CylinderGeometry(0.25, 0.35, 1.2, 4);
+            geometrias_compartidas.copa = new three.SphereGeometry(0.8, 4, 4);
             geometrias_compartidas.roca = new three.DodecahedronGeometry(0.5);
             geometrias_compartidas.suelo = new three.PlaneGeometry(tamanio_chunk, tamanio_chunk);
         }
 
+        // Genera un chunk con árboles, rocas y suelo verde
         function generar_chunk(chunk_x, chunk_z) {
             const grupo = new three.Group();
-            const semilla = chunk_x * 1000 + chunk_z;
+            const semilla = chunk_x * 7919 + chunk_z * 104729;
             const random = (s) => { let h = s * 9301 + 49297; return (h % 233280) / 233280; };
             const rng = (s) => random(s + semilla);
 
+            // Suelo verde
             const suelo = new three.Mesh(
                 geometrias_compartidas.suelo,
-                new three.MeshLambertMaterial({ color: 0x7CB342 })
+                new three.MeshLambertMaterial({ color: 0x5D8A3C })
             );
             suelo.rotation.x = -Math.PI/2;
             suelo.position.set(0, -0.25, 0);
             grupo.add(suelo);
 
-            const colores = [0xFF6B6B, 0x4ECDC4, 0xFFE66D, 0xA29BFE, 0xFD79A8];
-            const num_plataformas = 3 + Math.floor(rng(1) * 4);
-            for (let i = 0; i < num_plataformas; i++) {
-                const x = (rng(i+10) - 0.5) * tamanio_chunk * 0.7;
-                const z = (rng(i+20) - 0.5) * tamanio_chunk * 0.7;
-                if (Math.abs(x) < 1.5 && Math.abs(z) < 1.5) continue;
-                const plata = new three.Mesh(
-                    geometrias_compartidas.plataforma,
-                    new three.MeshLambertMaterial({ color: colores[Math.floor(rng(i+30) * colores.length)] })
-                );
-                plata.position.set(x, 0.2, z);
-                grupo.add(plata);
-            }
-
-            const num_arboles = 2 + Math.floor(rng(2) * 3);
+            // Árboles (cantidad variable)
+            const num_arboles = 4 + Math.floor(rng(1) * 4);
             for (let i = 0; i < num_arboles; i++) {
-                const x = (rng(i+40) - 0.5) * tamanio_chunk * 0.7;
-                const z = (rng(i+50) - 0.5) * tamanio_chunk * 0.7;
-                if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                const x = (rng(i+10) - 0.5) * tamanio_chunk * 0.75;
+                const z = (rng(i+20) - 0.5) * tamanio_chunk * 0.75;
+                // Evitar superposición con el centro (spawn)
+                if (Math.abs(x) < 2.5 && Math.abs(z) < 2.5) continue;
+                
                 const arbol = new three.Group();
                 const tronco = new three.Mesh(
                     geometrias_compartidas.tronco,
                     new three.MeshLambertMaterial({ color: 0x8B5A2B })
                 );
-                tronco.position.y = 0.75;
+                tronco.position.y = 0.6;
                 arbol.add(tronco);
+                
                 const copa = new three.Mesh(
                     geometrias_compartidas.copa,
-                    new three.MeshLambertMaterial({ color: 0x2E8B57 })
+                    new three.MeshLambertMaterial({ color: 0x2E7D32 })
                 );
-                copa.position.y = 1.8;
+                copa.position.y = 1.6;
                 arbol.add(copa);
+                
                 arbol.position.set(x, 0, z);
                 grupo.add(arbol);
+                
+                // Guardar referencia para colisiones (copa y tronco)
+                objetos_colision.push({
+                    pos: new three.Vector3(chunk_x * tamanio_chunk + x, 0.8, chunk_z * tamanio_chunk + z),
+                    radio: 0.9,
+                    tipo: 'arbol'
+                });
             }
 
-            const num_rocas = 2 + Math.floor(rng(3) * 3);
+            // Rocas (cantidad variable)
+            const num_rocas = 3 + Math.floor(rng(2) * 4);
             for (let i = 0; i < num_rocas; i++) {
-                const x = (rng(i+60) - 0.5) * tamanio_chunk * 0.7;
-                const z = (rng(i+70) - 0.5) * tamanio_chunk * 0.7;
-                if (Math.abs(x) < 1.5 && Math.abs(z) < 1.5) continue;
+                const x = (rng(i+30) - 0.5) * tamanio_chunk * 0.75;
+                const z = (rng(i+40) - 0.5) * tamanio_chunk * 0.75;
+                if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                
                 const roca = new three.Mesh(
                     geometrias_compartidas.roca,
-                    new three.MeshLambertMaterial({ color: 0x808080 })
+                    new three.MeshLambertMaterial({ color: 0x8A9A8A })
                 );
-                const escala = 0.4 + rng(i+80) * 0.6;
-                roca.scale.set(escala, escala * 0.7, escala);
-                roca.position.set(x, 0.3, z);
-                roca.rotation.y = rng(i+90) * Math.PI * 2;
+                const escala = 0.4 + rng(i+50) * 0.5;
+                roca.scale.set(escala, escala * 0.6, escala);
+                roca.position.set(x, 0.25, z);
+                roca.rotation.y = rng(i+60) * Math.PI * 2;
                 grupo.add(roca);
-            }
-
-            const num_columnas = 1 + Math.floor(rng(4) * 2);
-            for (let i = 0; i < num_columnas; i++) {
-                const x = (rng(i+100) - 0.5) * tamanio_chunk * 0.6;
-                const z = (rng(i+110) - 0.5) * tamanio_chunk * 0.6;
-                if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
-                const columna = new three.Mesh(
-                    geometrias_compartidas.columna,
-                    new three.MeshLambertMaterial({ color: 0x95B8D1 })
-                );
-                columna.position.set(x, 1.25, z);
-                grupo.add(columna);
+                
+                objetos_colision.push({
+                    pos: new three.Vector3(chunk_x * tamanio_chunk + x, 0.3, chunk_z * tamanio_chunk + z),
+                    radio: 0.5 * escala,
+                    tipo: 'roca'
+                });
             }
 
             return grupo;
         }
 
+        // Inicializa escena, cámara, luces y renderizador
         function inicializar_escena() {
             escena = new three.Scene();
             escena.background = new three.Color(0x87CEEB);
-            escena.fog = new three.Fog(0x87CEEB, 30, 50);
+            escena.fog = new three.Fog(0x87CEEB, 35, 55);
             
-            camara = new three.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
-            camara.position.copy(jugador);
+            camara = new three.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 80);
+            camara.position.copy(posicion_jugador);
             
             renderizador = new three.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderizador.setSize(window.innerWidth, window.innerHeight);
             renderizador.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderizador.shadowMap.enabled = false; // Sin sombras para rendimiento
             document.body.appendChild(renderizador.domElement);
             
-            const luz_ambiente = new three.AmbientLight(0x404060);
+            // Luces optimizadas
+            const luz_ambiente = new three.AmbientLight(0x404060, 0.6);
             escena.add(luz_ambiente);
             
-            const luz_direccional = new three.DirectionalLight(0xffeedd, 1);
-            luz_direccional.position.set(10, 20, 10);
+            const luz_direccional = new three.DirectionalLight(0xffeedd, 0.9);
+            luz_direccional.position.set(10, 25, 10);
             escena.add(luz_direccional);
             
-            const luz_relleno = new three.DirectionalLight(0x4466ff, 0.3);
-            luz_relleno.position.set(-10, 5, -10);
+            const luz_relleno = new three.DirectionalLight(0x4488ff, 0.2);
+            luz_relleno.position.set(-15, 5, -15);
             escena.add(luz_relleno);
         }
 
+        // Verifica colisiones con objetos (árboles y rocas)
+        function verificar_colisiones(posicion_nueva) {
+            const radio_jugador = 0.5;
+            for (const obj of objetos_colision) {
+                const distancia = posicion_nueva.distanceTo(obj.pos);
+                if (distancia < radio_jugador + obj.radio) {
+                    return true; // Colisión detectada
+                }
+            }
+            return false;
+        }
+
+        // Actualiza chunks según posición del jugador (carga/descarga)
         function actualizar_chunks() {
-            const chunk_x = Math.floor(jugador.x / tamanio_chunk);
-            const chunk_z = Math.floor(jugador.z / tamanio_chunk);
+            const chunk_x = Math.floor(posicion_jugador.x / tamanio_chunk);
+            const chunk_z = Math.floor(posicion_jugador.z / tamanio_chunk);
             
             if (chunk_x === ultimo_chunk_x && chunk_z === ultimo_chunk_z) return;
             ultimo_chunk_x = chunk_x;
             ultimo_chunk_z = chunk_z;
+
+            // Limpiar lista de colisiones (se regenerará con los chunks activos)
+            objetos_colision = [];
 
             const chunks_a_cargar = [];
             for (let dx = -distancia_vision; dx <= distancia_vision; dx++) {
@@ -180,6 +189,7 @@
             }
 
             const chunks_actuales = new Set(chunks_a_cargar);
+            // Descargar chunks fuera de rango
             for (const [key, grupo] of chunks_cargados) {
                 if (!chunks_actuales.has(key)) {
                     escena.remove(grupo);
@@ -187,6 +197,7 @@
                 }
             }
 
+            // Cargar nuevos chunks
             for (const key of chunks_a_cargar) {
                 if (!chunks_cargados.has(key)) {
                     const [cx, cz] = key.split(',').map(Number);
@@ -198,6 +209,7 @@
             }
         }
 
+        // Maneja eventos de teclado
         function manejar_teclas(event) {
             const tecla = event.key.toLowerCase();
             if (tecla === 'w') teclas.w = event.type === 'keydown';
@@ -210,15 +222,18 @@
             }
         }
 
+        // Maneja movimiento del ratón (cámara)
         function manejar_raton(event) {
-            if (esta_bloqueado) {
+            if (puntero_bloqueado) {
                 angulo_horizontal -= event.movementX * 0.002;
                 angulo_vertical -= event.movementY * 0.002;
                 angulo_vertical = Math.max(-1.2, Math.min(1.2, angulo_vertical));
             }
         }
 
+        // Actualiza posición del jugador con colisiones y física
         function actualizar_jugador() {
+            // Dirección de movimiento
             const adelante = new three.Vector3(-Math.sin(angulo_horizontal), 0, -Math.cos(angulo_horizontal));
             const derecha = new three.Vector3(Math.cos(angulo_horizontal), 0, -Math.sin(angulo_horizontal));
             const direccion = new three.Vector3(0, 0, 0);
@@ -228,52 +243,74 @@
             if (teclas.a) direccion.sub(derecha);
             if (teclas.d) direccion.add(derecha);
             
+            // Movimiento horizontal con colisiones
             if (direccion.length() > 0) {
                 direccion.normalize();
-                jugador.x += direccion.x * velocidad_movimiento;
-                jugador.z += direccion.z * velocidad_movimiento;
+                const posicion_prueba = posicion_jugador.clone();
+                posicion_prueba.x += direccion.x * velocidad_movimiento;
+                posicion_prueba.z += direccion.z * velocidad_movimiento;
+                
+                // Verificar colisión en X y Z por separado para sliding
+                const pos_x = posicion_jugador.clone();
+                pos_x.x += direccion.x * velocidad_movimiento;
+                if (!verificar_colisiones(pos_x)) {
+                    posicion_jugador.x = pos_x.x;
+                }
+                
+                const pos_z = posicion_jugador.clone();
+                pos_z.z += direccion.z * velocidad_movimiento;
+                if (!verificar_colisiones(pos_z)) {
+                    posicion_jugador.z = pos_z.z;
+                }
             }
 
+            // Salto
             if (teclas.espacio && en_suelo) {
                 velocidad_y = fuerza_salto;
                 en_suelo = false;
             }
 
+            // Física vertical (gravedad)
             velocidad_y += gravedad;
-            jugador.y += velocidad_y;
+            posicion_jugador.y += velocidad_y;
             
-            if (jugador.y <= 1.6) {
-                jugador.y = 1.6;
+            if (posicion_jugador.y <= 1.6) {
+                posicion_jugador.y = 1.6;
                 velocidad_y = 0;
                 en_suelo = true;
             }
 
+            // Actualizar cámara
             const euler = new three.Euler(angulo_vertical, angulo_horizontal, 0, 'YXZ');
             camara.quaternion.setFromEuler(euler);
-            camara.position.copy(jugador);
+            camara.position.copy(posicion_jugador);
             
             actualizar_chunks();
         }
 
+        // Bloquea el puntero al hacer clic
         function bloquear_raton() {
-            if (!esta_bloqueado) {
+            if (!puntero_bloqueado) {
                 renderizador.domElement.requestPointerLock();
             }
         }
 
+        // Loop principal de animación
         function animar() {
             requestAnimationFrame(animar);
             actualizar_jugador();
             renderizador.render(escena, camara);
-            esta_bloqueado = document.pointerLockElement === renderizador.domElement;
+            puntero_bloqueado = document.pointerLockElement === renderizador.domElement;
         }
 
+        // Redimensiona la ventana
         function redimensionar() {
             camara.aspect = window.innerWidth / window.innerHeight;
             camara.updateProjectionMatrix();
             renderizador.setSize(window.innerWidth, window.innerHeight);
         }
 
+        // PUNTO DE PARTIDA
         try {
             crear_geometrias_compartidas();
             inicializar_escena();
@@ -289,6 +326,7 @@
             console.error('Error:', e);
         }
 
+        // Detener el programa (no cierre abrupto)
         window.addEventListener('beforeunload', function() {});
     </script>
 </body>
